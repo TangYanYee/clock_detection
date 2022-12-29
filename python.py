@@ -15,27 +15,28 @@ center = (0,0)
 small_center = (0,0)
 dots_center = []
 is_12_on_top = True
-x_coff = 297/358
-y_coff = 210/248
-src_points = np.array([[177., 350.], [396., 347.], [180., 200.], [395., 199.]], dtype = "float32")
-dst_points = np.array([[177., 350.], [396., 350.], [177., 199.], [396., 199.]], dtype = "float32")
+x_coff = 300/383
+y_coff = 300/374
+src_points = np.array([[130., 357.], [487., 360.], [143., 110.], [483., 119.]], dtype = "float32")
+dst_points = np.array([[130., 357.], [487., 357.], [130., 110.], [487., 110.]], dtype = "float32")
 mtx =  np.array([[309.42268096,0.0,344.47160243], [0.0,305.46903569,223.85446847],[0.0,0.0,1.0]], dtype = "float32")
 cam_dist =  np.array([ 0.08619692,-0.04382931,-0.00451442,0.00761965,0.01002648], dtype = "float32")
 
 newcameramtx = np.array([[323.44592,0.,349.27075],[0.,315.38824,221.84938],[0.,0.,1.]], dtype = "float32")
 roi = (5, 9, 628, 462)
 M = cv.getPerspectiveTransform(src_points, dst_points)
-def increase_brightness(img, value=30):
-    hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
-    h, s, v = cv.split(hsv)
 
-    lim = 255 - value
-    v[v > lim] = 255
-    v[v <= lim] += value
-
-    final_hsv = cv.merge((h, s, v))
-    img = cv.cvtColor(final_hsv, cv.COLOR_HSV2BGR)
-    return img
+def click_event(event, x, y, flags, params):
+ 
+    # checking for left mouse clicks
+    if event == cv.EVENT_LBUTTONDOWN:
+        print(x*x_coff, ' ', y*y_coff)
+ 
+ 
+    # checking for right mouse clicks    
+    if event==cv.EVENT_RBUTTONDOWN:
+        print(x, ' ', y)
+ 
 if __name__=='__main__':
     while(vid_cam.isOpened()):
         ret, src = vid_cam.read()
@@ -49,14 +50,10 @@ if __name__=='__main__':
             src = cv.warpPerspective(src, M, (640 ,450), cv.INTER_LINEAR)
             src_print = src.copy()
             
+            gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY) #convert to gray scale
             blurred = cv.GaussianBlur(gray, (7,7), 0) 
             thresh = cv.threshold(blurred, 120, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU)[1]
             binaryIMG = cv.Canny(gray, 127, 255)
-            gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY) #convert to gray scale
-            blurred = cv.GaussianBlur(gray, (5,5), 0)  #blur the image
-            thresh = cv.threshold(blurred, 117, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU)[1] # change the image to binary image by setting a threshold 117, when change new lighting setup you should change the 2nd parameter
-           
-            binaryIMG = cv.Canny(gray, 127, 255) # add a canny edge detector
 
             
             #get size of the image
@@ -248,8 +245,8 @@ if __name__=='__main__':
                 cnts = cnts[0] if len(cnts) == 2 else cnts[1]
                 circle_center = []
                 circles = cv.HoughCircles(binaryIMG, cv.HOUGH_GRADIENT, 1, rows / 8,
-                                        param1=255, param2=30,
-                                        minRadius=160, maxRadius=190) #should adjust the min and max radius when the height of the camera changed
+                                        param1=255, param2=35,
+                                        minRadius=170, maxRadius=190) #should adjust the min and max radius when the height of the camera changed
                 if circles is not None:
                     circles = np.uint16(np.around(circles))
                     for i in circles[0, :]:
@@ -274,11 +271,12 @@ if __name__=='__main__':
                         distx = (circle_center[0+i][0] - circle_center[1+i][0])*x_coff
                         disty = (circle_center[0+i][1] - circle_center[1+i][1])*y_coff
                         print("line length:",math.sqrt(distx*distx+disty*disty))
-                        cv.line(src_print,circle_center[0+i],circle_center[i+1],(255,0,255),1)
+                        cv.line(src_print,circle_center[0+i],circle_center[i+1],(255,100,255),1)
 
         cv.imshow('frame', binaryIMG)
         cv.imshow('thresh', thresh) 
         cv.imshow('src', src_print)
+        cv.setMouseCallback('src', click_event)
         if cv.waitKey(100) & 0xFF == ord('q'):
             break
 
