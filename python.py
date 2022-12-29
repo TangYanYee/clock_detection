@@ -19,8 +19,11 @@ x_coff = 297/358
 y_coff = 210/248
 src_points = np.array([[177., 350.], [396., 347.], [180., 200.], [395., 199.]], dtype = "float32")
 dst_points = np.array([[177., 350.], [396., 350.], [177., 199.], [396., 199.]], dtype = "float32")
-mtx = [[309.42268096,0.0,344.47160243], [0.0,305.46903569,223.85446847],[0.0,0.0,1.0]]
-dist = [ 0.08619692,-0.04382931,-0.00451442,0.00761965,0.01002648]
+mtx =  np.array([[309.42268096,0.0,344.47160243], [0.0,305.46903569,223.85446847],[0.0,0.0,1.0]], dtype = "float32")
+cam_dist =  np.array([ 0.08619692,-0.04382931,-0.00451442,0.00761965,0.01002648], dtype = "float32")
+
+newcameramtx = np.array([[323.44592,0.,349.27075],[0.,315.38824,221.84938],[0.,0.,1.]], dtype = "float32")
+roi = (5, 9, 628, 462)
 M = cv.getPerspectiveTransform(src_points, dst_points)
 def increase_brightness(img, value=30):
     hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
@@ -36,16 +39,15 @@ def increase_brightness(img, value=30):
 if __name__=='__main__':
     while(vid_cam.isOpened()):
         ret, src = vid_cam.read()
-        src_print = src.copy()
         if src is not None:
-            # some filter to the image that need to execute every loop            h,  w = src.shape[:2]
-            newcameramtx, roi = cv.getOptimalNewCameraMatrix(np.float32(mtx), np.float32(dist), (w,h), 1, (w,h))
+            # some filter to the image that need to execute every loop            
             gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
-            dst = cv.undistort(src, np.float32(mtx), np.float32(dist), None, newcameramtx)
+            dst = cv.undistort(src, mtx, cam_dist, None, newcameramtx)
             # crop the image
-            x, y, w, h = roi
-            src = dst[y:y+h, x:x+w]
+            roix, roiy, w, h = roi
+            src = dst[roiy:roiy+h, roix:roix+w]
             src = cv.warpPerspective(src, M, (640 ,450), cv.INTER_LINEAR)
+            src_print = src.copy()
             
             blurred = cv.GaussianBlur(gray, (7,7), 0) 
             thresh = cv.threshold(blurred, 120, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU)[1]
@@ -244,9 +246,10 @@ if __name__=='__main__':
                 thresh = cv.threshold(gray, 7, 255, cv.THRESH_BINARY)[1] # change the image to binary image by setting a threshold 117, when change new lighting setup you should change the 2nd parameter
                 cnts = cv.findContours(thresh, cv.RETR_TREE, cv.CHAIN_APPROX_NONE) 
                 cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+                circle_center = []
                 circles = cv.HoughCircles(binaryIMG, cv.HOUGH_GRADIENT, 1, rows / 8,
                                         param1=255, param2=30,
-                                        minRadius=160, maxRadius=180) #should adjust the min and max radius when the height of the camera changed
+                                        minRadius=160, maxRadius=190) #should adjust the min and max radius when the height of the camera changed
                 if circles is not None:
                     circles = np.uint16(np.around(circles))
                     for i in circles[0, :]:
@@ -259,12 +262,20 @@ if __name__=='__main__':
                         cv.circle(src_print, center, radius, (255, 0, 255), 3)
                     for c in cnts: 
                         area = cv.contourArea(c) 
-                        if(area > 50 and area < 100):# the hour and min hands
+                        if(area > 30 and area < 100):# the hour and min hands
                             ((x, y), r) = cv.minEnclosingCircle(c) 
                             # fliter the useful dots by the distance between the small center and dots center
                             dist = math.dist(center, [x,y])
-                            if(dist>145 and dist<165):
+                            if(dist>160 and dist<185):
+                                circle_center.append([int(x),int(y)])
                                 cv.circle(src_print,(int(x),int(y)),int(r),(255,255,0),1)
+                if len(circle_center) == 6:
+                    for i in range(0,6,2):
+                        distx = (circle_center[0+i][0] - circle_center[1+i][0])*x_coff
+                        disty = (circle_center[0+i][1] - circle_center[1+i][1])*y_coff
+                        print("line length:",math.sqrt(distx*distx+disty*disty))
+                        cv.line(src_print,circle_center[0+i],circle_center[i+1],(255,0,255),1)
+
         cv.imshow('frame', binaryIMG)
         cv.imshow('thresh', thresh) 
         cv.imshow('src', src_print)
