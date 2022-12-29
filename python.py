@@ -15,17 +15,29 @@ center = (0,0)
 small_center = (0,0)
 dots_center = []
 is_12_on_top = True
-x_coff = 300/383
+# this affects the size of the image the value should calculate by the actual length divide by the pixel difference in x/y
+# unit in mm
+#  - - > x
+# |
+# | screen
+# v
+# y
+x_coff = 300/383 
 y_coff = 300/374
+# this need to click at 4 angle of a rectangle to calibrate the perspective transform
 src_points = np.array([[130., 357.], [487., 360.], [143., 110.], [483., 119.]], dtype = "float32")
 dst_points = np.array([[130., 357.], [487., 357.], [130., 110.], [487., 110.]], dtype = "float32")
+
+# this is camera matrix and dist, whenever we use a new camera we need calibrate this by using the camera_calibrate.py after getting the result just replace the value
 mtx =  np.array([[309.42268096,0.0,344.47160243], [0.0,305.46903569,223.85446847],[0.0,0.0,1.0]], dtype = "float32")
 cam_dist =  np.array([ 0.08619692,-0.04382931,-0.00451442,0.00761965,0.01002648], dtype = "float32")
-
+# this is output of the getOptimalNewCameraMatrix, whenever we use a new camera we need to calibrate this by using the camera_calibrate.py after gettubg the result
 newcameramtx = np.array([[323.44592,0.,349.27075],[0.,315.38824,221.84938],[0.,0.,1.]], dtype = "float32")
 roi = (5, 9, 628, 462)
-M = cv.getPerspectiveTransform(src_points, dst_points)
 
+M = cv.getPerspectiveTransform(src_points, dst_points) # get perspective transform 
+
+#click fuction for printing out the pixel and calculated mm
 def click_event(event, x, y, flags, params):
  
     # checking for left mouse clicks
@@ -43,11 +55,13 @@ if __name__=='__main__':
         if src is not None:
             # some filter to the image that need to execute every loop            
             gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
+            # counter the fish eye effect of the camera
             dst = cv.undistort(src, mtx, cam_dist, None, newcameramtx)
             # crop the image
             roix, roiy, w, h = roi
             src = dst[roiy:roiy+h, roix:roix+w]
             src = cv.warpPerspective(src, M, (640 ,450), cv.INTER_LINEAR)
+
             src_print = src.copy()
             
             gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY) #convert to gray scale
@@ -147,7 +161,7 @@ if __name__=='__main__':
                 startpointy = 100
                 endpointx = cols
                 endpointy = rows-150
-                img = thresh[startpointy:endpointy,startpointx:endpointx] #cut out part of the threshold inamge
+                img = thresh[startpointy:endpointy,startpointx:endpointx] #cut out part of the threshold image
                 img2 = binaryIMG[startpointy:endpointy,startpointx:endpointx] 
                 img3 = np.zeros((endpointy-startpointy, endpointx-startpointx, 3), dtype = np.uint8)
                 img3 = cv.cvtColor(img3,cv.COLOR_BGR2GRAY)
@@ -178,13 +192,16 @@ if __name__=='__main__':
                         width = int(rect[1][0])
                         height = int(rect[1][1])
                         center = (int(rect[0][0]),int(rect[0][1])) 
+                        # because the width and height will change according to different orientation, therefore i take the longer side to be the length of the hand
                         hand_length.append(max(width,height))
+                        # determine the angle by whether the width is longer or the height is longer
                         if(width > height):
                             a = rect[2] - 90
                             hand_ang.append(a)
                         else:   
                             hand_ang.append(rect[2])
                         cv.drawContours(src_print,[box],0,(255,0,0),1)
+                        #find the small circles of the hand to determine the orientaion of the hand
                         circles = cv.HoughCircles(img3, cv.HOUGH_GRADIENT, 1, rows / 8,
                                                 param1=255, param2=5,
                                                 minRadius=4, maxRadius=7)
@@ -199,9 +216,10 @@ if __name__=='__main__':
                                         hand_ori.append([1])
                                     else:
                                         hand_ori.append([0])
-                                
+                    
                     elif (area > 200): # the second hand
                         m = cv.moments(c)
+                        #find the center of mass to determine the orientation of the second hand, becuase the circle of the second hand is hard to detect
                         if( m["m00"] != 0):
                             x = int(m["m10"] / m["m00"])
                             y = int(m["m01"] / m["m00"])
@@ -212,6 +230,7 @@ if __name__=='__main__':
                     print("Min Hand ang: ",hand_ang[hand_length.index(max(hand_length))])
                     print("Hour Hand ang: ",hand_ang[hand_length.index(min(hand_length))])
                 linesP = cv.HoughLinesP(img2, 1, np.pi / 180, 15, None, 125, 10)
+                # if more then one line is detected then will calculate the mean of the 2 end point of the line, so that only one line will always appears
                 if linesP is not None:
                     sum_x1 = 0
                     sum_x2 = 0
@@ -245,8 +264,8 @@ if __name__=='__main__':
                 cnts = cnts[0] if len(cnts) == 2 else cnts[1]
                 circle_center = []
                 circles = cv.HoughCircles(binaryIMG, cv.HOUGH_GRADIENT, 1, rows / 8,
-                                        param1=255, param2=35,
-                                        minRadius=170, maxRadius=190) #should adjust the min and max radius when the height of the camera changed
+                                        param1=255, param2=31,
+                                        minRadius=170, maxRadius=185) #should adjust the min and max radius when the height of the camera changed
                 if circles is not None:
                     circles = np.uint16(np.around(circles))
                     for i in circles[0, :]:
@@ -257,18 +276,22 @@ if __name__=='__main__':
                         # circle outline
                         print(radius)
                         cv.circle(src_print, center, radius, (255, 0, 255), 3)
+                        
                     for c in cnts: 
                         area = cv.contourArea(c) 
                         if(area > 30 and area < 100):# the hour and min hands
                             ((x, y), r) = cv.minEnclosingCircle(c) 
                             # fliter the useful dots by the distance between the small center and dots center
                             dist = math.dist(center, [x,y])
-                            if(dist>160 and dist<185):
+                            if(dist>155 and dist<175):
                                 circle_center.append([int(x),int(y)])
                                 cv.circle(src_print,(int(x),int(y)),int(r),(255,255,0),1)
-                if len(circle_center) == 6:
+                            cv.circle(src_print, center, 155, (0, 255, 255), 2) 
+                            cv.circle(src_print, center, 175, (0, 255, 255), 2) 
+                if len(circle_center) == 6: # make sure all 6 holes has been detected
                     for i in range(0,6,2):
-                        distx = (circle_center[0+i][0] - circle_center[1+i][0])*x_coff
+                        # calculation of the distance between 2 holes
+                        distx = (circle_center[0+i][0] - circle_center[1+i][0])*x_coff 
                         disty = (circle_center[0+i][1] - circle_center[1+i][1])*y_coff
                         print("line length:",math.sqrt(distx*distx+disty*disty))
                         cv.line(src_print,circle_center[0+i],circle_center[i+1],(255,100,255),1)
