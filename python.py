@@ -3,15 +3,17 @@ import cv2 as cv
 import numpy as np
 import math
 import os
-import pytesseract
 from easyocr import Reader
-pytesseract.pytesseract.tesseract_cmd='C:/Program Files/Tesseract-OCR/tesseract.exe'
+import serial_comm as ser
+import shape_detection as shape
 # reader = Reader(['en'],gpu = False)
-state_dict = {'FIND_CIRCLE': 0, 'DETECTING_NUMBER':1, 'DETECT_HANDS':2, 'DETECT_HOLES':3}
+state_dict = {'FIND_CIRCLE': 0, 'DETECTING_NUMBER':1, 'DETECT_HANDS':2, 'DETECT_HOLES':3,'BLACK_BOX_DETECTION':4}
 state = 3
 from imutils.object_detection import non_max_suppression
 vid_cam = cv.VideoCapture(0, cv.CAP_DSHOW)
-center = (0,0)
+# vid_cam.set(cv.CAP_PROP_FRAME_WIDTH, 1280)
+# vid_cam.set(cv.CAP_PROP_FRAME_HEIGHT, 720)
+center_list = []
 small_center = (0,0)
 dots_center = []
 is_12_on_top = True
@@ -24,18 +26,7 @@ is_12_on_top = True
 # y
 x_coff = 300/383 
 y_coff = 300/374
-# this need to click at 4 angle of a rectangle to calibrate the perspective transform
-src_points = np.array([[130., 357.], [487., 360.], [143., 110.], [483., 119.]], dtype = "float32")
-dst_points = np.array([[130., 357.], [487., 357.], [130., 110.], [487., 110.]], dtype = "float32")
 
-# this is camera matrix and dist, whenever we use a new camera we need calibrate this by using the camera_calibrate.py after getting the result just replace the value
-mtx =  np.array([[309.42268096,0.0,344.47160243], [0.0,305.46903569,223.85446847],[0.0,0.0,1.0]], dtype = "float32")
-cam_dist =  np.array([ 0.08619692,-0.04382931,-0.00451442,0.00761965,0.01002648], dtype = "float32")
-# this is output of the getOptimalNewCameraMatrix, whenever we use a new camera we need to calibrate this by using the camera_calibrate.py after gettubg the result
-newcameramtx = np.array([[323.44592,0.,349.27075],[0.,315.38824,221.84938],[0.,0.,1.]], dtype = "float32")
-roi = (5, 9, 628, 462)
-
-M = cv.getPerspectiveTransform(src_points, dst_points) # get perspective transform 
 
 #click fuction for printing out the pixel and calculated mm
 def click_event(event, x, y, flags, params):
@@ -48,108 +39,41 @@ def click_event(event, x, y, flags, params):
     # checking for right mouse clicks    
     if event==cv.EVENT_RBUTTONDOWN:
         print(x, ' ', y)
- 
+
 if __name__=='__main__':
     while(vid_cam.isOpened()):
         ret, src = vid_cam.read()
         if src is not None:
-            # some filter to the image that need to execute every loop            
-            gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY)
-            # counter the fish eye effect of the camera
-            dst = cv.undistort(src, mtx, cam_dist, None, newcameramtx)
-            # crop the image
-            roix, roiy, w, h = roi
-            src = dst[roiy:roiy+h, roix:roix+w]
-            src = cv.warpPerspective(src, M, (640 ,450), cv.INTER_LINEAR)
+            
 
+            # ser.send_xyz_to_pc(1,2,3)
+            src, gray, thresh, binaryIMG = shape.filteringImage(src)
             src_print = src.copy()
             
-            gray = cv.cvtColor(src, cv.COLOR_BGR2GRAY) #convert to gray scale
-            blurred = cv.GaussianBlur(gray, (7,7), 0) 
-            thresh = cv.threshold(blurred, 120, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU)[1]
-            binaryIMG = cv.Canny(gray, 127, 255)
-
-            
             #get size of the image
-            rows = gray.shape[0] 
-            cols = gray.shape[1]
+            rows = src.shape[0] 
+            cols = src.shape[1]
             if state == state_dict['FIND_CIRCLE']:
-                # Find circle
-                circles = cv.HoughCircles(binaryIMG, cv.HOUGH_GRADIENT, 1, rows / 8,
-                                        param1=255, param2=30,
-                                        minRadius=130, maxRadius=160) #should adjust the min and max radius when the height of the camera changed
-                if circles is not None:
-                    circles = np.uint16(np.around(circles))
-                    for i in circles[0, :]:
-                        # circle center
-                        center = (i[0], i[1])
-                        cv.circle(src_print, center, 1, (0, 100, 100), 3)
-                        radius = i[2]
-                        # circle outline
-                        cv.circle(src_print, center, radius, (255, 0, 255), 3)
-                        state += 1 # go to next step
+                # Find clock circle (the white part)
+                center_list = shape.detect_circle(src = binaryIMG, src_print = src_print, minR = 140, maxR = 155)
+                if len(center_list) >=1 :
+                    state += 1 # go to next step
                 
             elif state == state_dict['DETECTING_NUMBER']:  
-                circles = cv.HoughCircles(binaryIMG, cv.HOUGH_GRADIENT, 1, rows / 8,
-                                          param1=255, param2=30,
-                                          minRadius=130, maxRadius=160) #should adjust the min and max radius when the height of the camera changed
-                if circles is not None:
-                    circles = np.uint16(np.around(circles))
-                    for i in circles[0, :]:
-                        center = (i[0], i[1])
                 # Find small dots 
-                cnts = cv.findContours(thresh, cv.RETR_TREE, cv.CHAIN_APPROX_NONE) #find small dots by finding contours
-                cnts = cnts[0] if len(cnts) == 2 else cnts[1]
-                dots_center = []
-                for c in cnts: 
-                    area = cv.contourArea(c) 
-                    #find the hole of the clock
-                    if area > 23 and area < 120: 
-                        ((x,y), r) = cv.minEnclosingCircle(c) 
-                        dist = math.dist(center, [x,y])
-                        if(dist<20):
-                            small_center = [int(x),int(y)]
-                            print("small_center_x:",x,"small_center_y:",y)
-                            cv.circle(src_print, small_center, int(r), (0, 255, 255), 2) 
-                            cv.circle(src_print, small_center, 75, (0, 255, 255), 2) 
-                            cv.circle(src_print, small_center, 95, (0, 255, 255), 2) 
-                    #find the small dots of the clock
-                    elif area > 3 and area < 20: 
-                        ((x, y), r) = cv.minEnclosingCircle(c) 
-                        #fliter the useful dots by the distance between the small center and dots center
-                        dist = math.dist(small_center, [x,y])
-                        if(dist>75 and dist<95):
-                            ix = int(x)
-                            iy = int(y)
-                            up_text = ''
-                            down_text = ''
-                            #filter out the up and down dots by the difference of the x cooridinate
-                            if(abs(ix - small_center[0])<10):
-                                dots_center.append([ix,iy])
-                                if(iy - small_center[1]<0):
-                                    cv.rectangle(src_print, (ix-30, iy),(ix+30, iy-45), (36, 255, 12), 1)
-                                    img = src[iy-45:iy,ix-30:ix+30]
-                                    cv.imshow("up",img)
-                                    up_text = pytesseract.image_to_string(img, lang='eng', config='--psm 10 --oem 3 -c tessedit_char_whitelist=0123456789') #use py tesseract for the text detection
-                                    print("up: ",up_text, '.')
-                                else:
-                                    cv.rectangle(src_print, (ix-30, iy),(ix+30, iy+45), (36, 255, 12), 1)
-                                    img = src[iy:iy+45,ix-30:ix+30]
-                                    down_text = pytesseract.image_to_string(img, lang='eng', config='--psm 10 --oem 3 -c tessedit_char_whitelist=0123456789') #use py tesseract for the text detection
-                                    print("down: ", down_text, '.')
-                                    cv.imshow("down",img)
-                                print("x:",ix,"y:",iy)
-                                print("area:",area)
-                                cv.circle(src_print, (ix, iy), int(r), (36, 255, 12), 2)
-                                #determin the clock orientation by where is 12, notice that when the clock is upside down, the 6 will be detected as 9
-                            if(up_text.find("12") != -1 or down_text.find("6") != -1):
-                                print("12 on top")
-                                is_12_on_top = True
-                            elif(up_text.find("9") != -1 or down_text.find("12") != -1):
-                                print("12 on bottom")
-                                is_12_on_top = False
-                            if(len(dots_center) == 2):
-                                state += 1
+                small_center = shape.detect_dots(thresh,src_print,cv.RETR_TREE,(center_list, 23, 120, 0, 20))
+                if(len(small_center)>=1):
+                    print("small center", small_center)
+                    dots_center = shape.detect_dots(thresh,src_print,cv.RETR_TREE,(small_center, 5, 30, 85, 100))
+                    cv.circle(src_print, small_center[0], 90, (0, 255, 255), 2) 
+                    cv.circle(src_print, small_center[0], 100, (0, 255, 255), 2) 
+                    if(len(dots_center)>=1):
+                        is_12_on_top = shape.orientation_detect(src,src_print,dots_center,small_center)
+                        print(is_12_on_top)
+                        if(is_12_on_top is not None):
+                            state += 1
+ 
+
             elif state == state_dict['DETECT_HANDS']:
                 # if is_12_on_top is trueign it with the top
                 # if is_12_on_top is flase, align it with the bottom
@@ -260,47 +184,60 @@ if __name__=='__main__':
                     cv.circle(src_print, (l[2], l[3]), 1, (255, 255, 50), 3)
             elif state == state_dict['DETECT_HOLES']:   
                 thresh = cv.threshold(gray, 7, 255, cv.THRESH_BINARY)[1] # change the image to binary image by setting a threshold 117, when change new lighting setup you should change the 2nd parameter
+                #find the center of the clock
+                center_list = shape.detect_circle(src = binaryIMG, src_print = src_print, minR = 170, maxR = 185, votes = 25) #should adjust the min and max radius when the height of the camera changed
+                if len(center_list) >= 1:
+                    ser.testing_func(1)
+                    holes_center = shape.detect_dots(thresh,src_print,cv.RETR_TREE, (center_list, 30, 100, 155, 175))
+                    cv.circle(src_print, center_list[0], 155, (0, 255, 255), 2) 
+                    cv.circle(src_print, center_list[0], 175, (0, 255, 255), 2) 
+                    if len(holes_center) == 6: # make sure all 6 holes has been detected
+                        for i in range(0,6,2):
+                            # calculation of the distance between 2 holes
+                            distx = (holes_center[0+i][0] - holes_center[1+i][0])*x_coff 
+                            disty = (holes_center[0+i][1] - holes_center[1+i][1])*y_coff
+                            print("line length:",math.sqrt(distx*distx+disty*disty))
+                            cv.line(src_print, holes_center[0+i], holes_center[i+1], (255,100,255), 1)
+                else:
+                    ser.testing_func(0)
+
+            elif state == state_dict['BLACK_BOX_DETECTION']:  
+                thresh = cv.threshold(gray, 50, 255, cv.THRESH_BINARY_INV)[1] # change the image to binary image by setting a threshold 117, when change new lighting setup you should change the 2nd parameter
                 cnts = cv.findContours(thresh, cv.RETR_TREE, cv.CHAIN_APPROX_NONE) 
                 cnts = cnts[0] if len(cnts) == 2 else cnts[1]
-                circle_center = []
-                circles = cv.HoughCircles(binaryIMG, cv.HOUGH_GRADIENT, 1, rows / 8,
-                                        param1=255, param2=31,
-                                        minRadius=170, maxRadius=185) #should adjust the min and max radius when the height of the camera changed
-                if circles is not None:
-                    circles = np.uint16(np.around(circles))
-                    for i in circles[0, :]:
-                        # circle center
-                        center = (int(i[0]), int(i[1]))
-                        cv.circle(src_print, center, 1, (0, 100, 100), 3)
-                        radius = int(i[2])
-                        # circle outline
-                        print(radius)
-                        cv.circle(src_print, center, radius, (255, 0, 255), 3)
-                        
-                    for c in cnts: 
-                        area = cv.contourArea(c) 
-                        if(area > 30 and area < 100):# the hour and min hands
-                            ((x, y), r) = cv.minEnclosingCircle(c) 
-                            # fliter the useful dots by the distance between the small center and dots center
-                            dist = math.dist(center, [x,y])
-                            if(dist>155 and dist<175):
-                                circle_center.append([int(x),int(y)])
-                                cv.circle(src_print,(int(x),int(y)),int(r),(255,255,0),1)
-                            cv.circle(src_print, center, 155, (0, 255, 255), 2) 
-                            cv.circle(src_print, center, 175, (0, 255, 255), 2) 
-                if len(circle_center) == 6: # make sure all 6 holes has been detected
-                    for i in range(0,6,2):
-                        # calculation of the distance between 2 holes
-                        distx = (circle_center[0+i][0] - circle_center[1+i][0])*x_coff 
-                        disty = (circle_center[0+i][1] - circle_center[1+i][1])*y_coff
-                        print("line length:",math.sqrt(distx*distx+disty*disty))
-                        cv.line(src_print,circle_center[0+i],circle_center[i+1],(255,100,255),1)
+                for c in cnts: 
+                    area = cv.contourArea(c) 
+                    if(area > 5000 and area < 20000):# the hour and min hands
+                        print(area)
+                        #use a minimum area rectangle to bound the hour and min hand
+                        rect = cv.minAreaRect(c)
+                        box = cv.boxPoints(rect)
+                        box = np.int0(box)
+
+                        # Retrieve the key parameters of the rotated bounding box
+                        top_point_y = np.min(box[:, 1])
+                        bottom_point_y = np.max(box[:, 1])
+                        top_point_x = box[:, 0][np.where(box[:, 1] == top_point_y)][0]
+                        bottom_point_x = box[:, 0][np.where(box[:, 1] == bottom_point_y)][0]
+                        width = int(rect[1][0])
+                        height = int(rect[1][1])
+                        center = (int(rect[0][0]),int(rect[0][1])) 
+                        cv.drawContours(src_print,[box],0,(255,0,0),1)
+                    # approx = cv.approxPolyDP(c, 0.1*cv.arcLength(c, True), True)
+                    # cv.polylines(src_print, [approx], True, (255, 0, 0), 2)
+                    # if len(approx) == 4:
+                    #     x, y, w, h = cv.boundingRect(c)
+
+                
 
         cv.imshow('frame', binaryIMG)
         cv.imshow('thresh', thresh) 
         cv.imshow('src', src_print)
         cv.setMouseCallback('src', click_event)
-        if cv.waitKey(100) & 0xFF == ord('q'):
+        print('q:', ord('q'))
+        print('Q:', ord('Q'))
+        print('idk: ', 0xFF)
+        if cv.waitKey(4) & 0xFF == ord('q'):
             break
 
     vid_cam.release()
