@@ -2,55 +2,93 @@ import cv2 as cv
 import numpy as np
 import math
 from easyocr import Reader
-import serial_comm as ser
+import serial_comm as xyz
 import shape_detection as shape
-# reader = Reader(['en'],gpu = False)
+from vidgear.gears import VideoGear
+from vidgear.gears import CamGear
+import time
+
+options1 = {
+    "CAP_PROP_FRAME_WIDTH": 2560, # resolution 320x240
+    "CAP_PROP_FRAME_HEIGHT": 1440
+}
+options2 = {
+    "CAP_PROP_FRAME_WIDTH": 960, # resolution 320x240
+    "CAP_PROP_FRAME_HEIGHT": 720
+}
+
+# To open live video stream on webcam at first index(i.e. 0) 
+# device and apply source tweak parameters
+stream1 = CamGear(source=0, logging=True, **options1).start()
+stream2 = CamGear(source=1, logging=True, **options2).start()
+
 state_dict = {
     'FIND_NUMBER':0, 
     'DETECT_HANDS':1, 
     'DETECT_HOLES':2,
     'FIND_BLACK_BOX':3,
-    'FIND_FRAME':4
+    'PRINT':10,
 }
-state = 6
 
-from imutils.object_detection import non_max_suppression
-vid_cam = cv.VideoCapture(0, cv.CAP_DSHOW)
-vid_cam.set(cv.CAP_PROP_FRAME_WIDTH, 1920)
-vid_cam.set(cv.CAP_PROP_FRAME_HEIGHT, 720)
+
+
+state = 3
 center_list = []
 small_center = (0,0)
 dots_center = []
-is_12_on_top = None
 # this affects the size of the image the value should calculate by the actual length divide by the pixel difference in x/y
 # unit in mm
 #  - - > x
-# |
 # | screen
+# |
 # v
 # y
 
-x_coff = 300/882 
-y_coff = 300/882
-
-
-
+# xyz table coordinate system
+# y
+# ^
+# | screen
+# |
+#  - - > x
+def align_hole(hole_idx):
+    do_once = 0
+    while(1):
+        src2 = stream2.read( )# capture the webcam
+        if src2 is not None:   
+            #for debugging 
+            if(do_once == 0):
+                name_str = 'hole' + str(hole_idx) + ".jpg"
+                cv.imwrite(name_str, src2) # export the webcam as an image
+                do_once = 1
+            src2, gray2, thresh2, binaryIMG2 = shape.filteringImage2(src2)
+            dots_center = shape.detect_dots(thresh2,src2, [(0,0)], 2000, 10000, 0, 700000)
+            cv.imshow('thresh2', thresh2) #display the photo
+            cv.imshow('src2', src2) #display the photo
+            cv.waitKey(4)
+            print("Cam2: ",dots_center)
+            # # -12.5
+            #aligning the center using pid control, with only p term
+            if(len(dots_center) == 1):
+                xyz.send_Gcode("G91")
+                x = (dots_center[0][0] - 145) * 1/1000 * 0.9
+                y = -(dots_center[0][1] - 139) * 1/1000 * 0.9
+                if(abs(dots_center[0][0] - 145) < 3):
+                    x = 0
+                if(abs(dots_center[0][1] - 139) < 3):
+                    y = 0
+                xyz.move_pid([x,y,0])
+                time.sleep(0.1)
+                if x == 0 and y == 0:
+                    print('finish_align')
+                    break            
 #click fuction for printing out the pixel and calculated mm
-def click_event(event, x, y, flags, params):
- 
-    # checking for left mouse clicks
-    if event == cv.EVENT_LBUTTONDOWN:
-        print(x*x_coff, ' ', y*y_coff)
- 
- 
-    # checking for right mouse clicks    
-    if event == cv.EVENT_RBUTTONDOWN:
-        print(x, ' ', y)
-
 if __name__=='__main__':
     num = 0
-    while(vid_cam.isOpened()):
-        ret, src = vid_cam.read()
+    while(1):
+        src = stream1.read()
+
+            # 289 250
+             
         if src is not None:
             
 
@@ -60,31 +98,28 @@ if __name__=='__main__':
             #get size of the image
             rows = src.shape[0] 
             cols = src.shape[1]
-                
             if state == state_dict['FIND_NUMBER']:  
-                center_list = shape.detect_circle(src = binaryIMG, src_print = src_print, minR = 340, maxR = 360)
+                thresh = cv.threshold(gray, 130, 255, cv.THRESH_BINARY_INV)[1] # change the image to binary image by setting a threshold 117, when change new lighting setup you should change the 2nd parameter
+                center_list = shape.detect_circle(src = binaryIMG, src_print = src_print, minR = 245, maxR = 265)
                 # Find small dots 
                 if len(center_list)>=1:
-                    dots_center = shape.detect_dots(thresh,src_print, center_list, 80, 150, 200, 235)
-                    cv.circle(src_print, center_list[0], 235, (0, 255, 255), 2) 
-                    cv.circle(src_print, center_list[0], 200, (0, 255, 255), 2) 
-                    if(len(dots_center)>=2):
-                        print("clock ang: ", math.atan2(dots_center[0][1]-dots_center[1][1], dots_center[0][0]-dots_center[1][0])/np.pi*180.0)
-                        is_12_on_top = shape.detect_orientation(src,src_print,dots_center,center_list)
-                        print(is_12_on_top)
-                    # if(is_12_on_top is not None):
-                    #     state += 1
+                    dots_center = shape.detect_dots(thresh,src_print, center_list, 5, 40, 145, 175)
+                    cv.circle(src_print, center_list[0], 175, (0, 255, 255), 2) 
+                    cv.circle(src_print, center_list[0], 145, (0, 255, 255), 2) 
+
+                    if(len(dots_center)>= 12):
+                        point = shape.detect_orientation(src,src_print,dots_center,center_list)
+                        print("clock ang: ", math.atan2(point[0][1]-point[1][1], point[0][0]-point[1][0])/np.pi*180.0)
+                        print(point)
  
 
             elif state == state_dict['DETECT_HANDS']:
-                # if is_12_on_top is trueign it with the top
-                # if is_12_on_top is flase, align it with the bottom
-                thresh = cv.threshold(gray, 90, 255, cv.THRESH_BINARY_INV)[1] # change the image to binary image by setting a threshold 117, when change new lighting setup you should change the 2nd parameter
+                thresh = cv.threshold(gray, 190, 255, cv.THRESH_BINARY_INV)[1] # change the image to binary image by setting a threshold 117, when change new lighting setup you should change the 2nd parameter
                 #should change the below part if the position for putting the hour/min/second hand is changed
                 startpointx = 1300
-                startpointy = 170
-                endpointx = cols-300
-                endpointy = rows-300
+                startpointy = 0
+                endpointx = cols-750
+                endpointy = rows-1200
                 # crop the image
                 img = thresh[startpointy:endpointy,startpointx:endpointx] #cut out part of the threshold image
                 cv.rectangle(src_print,(startpointx,startpointy),(endpointx,endpointy),(0,0,0),1)
@@ -101,70 +136,72 @@ if __name__=='__main__':
                     hand_arr[2].show_data()
 
             elif state == state_dict['DETECT_HOLES']:   
-                thresh = cv.threshold(gray, 7, 255, cv.THRESH_BINARY)[1]
+                thresh = cv.threshold(gray, 40, 255, cv.THRESH_BINARY)[1]
                 #find the center of the clock
-                center_list = shape.detect_circle(src = binaryIMG, src_print = src_print, minR = 400, maxR = 440, votes = 30) #should adjust the min and max radius when the height of the camera changed
+                center_list = shape.detect_circle(src = binaryIMG, src_print = src_print, minR = 300, maxR = 320, votes = 25) #should adjust the min and max radius when the height of the camera changed
                 if len(center_list) >= 1:
-                    # ser.testing_func(1)
-                    holes_center = shape.detect_dots(thresh,src_print, center_list, 100, 370, 370, 410)
-                    cv.circle(src_print, center_list[0], 410, (0, 255, 255), 2) 
-                    cv.circle(src_print, center_list[0], 370, (0, 255, 255), 2) 
+                    # xyz_table.drilling_action(1)
+                    holes_center = shape.detect_dots(thresh,src_print, center_list, 80, 300, 265, 300)
+                    cv.circle(src_print, center_list[0], 300, (0, 255, 255), 2) 
+                    cv.circle(src_print, center_list[0], 265, (0, 255, 255), 2) 
+                    print(shape.pixel2xy([center_list[0][0],center_list[0][1]]))
                     if len(holes_center) == 6: # make sure all 6 holes has been detected
+                        name_str = "move"  +".jpg"
+                        cv.imwrite(name_str, src_print)
                         for i in range(0,6,2):
                             # calculation of the distance between 2 holes
-                            distx = (holes_center[0+i][0] - holes_center[1+i][0])*x_coff 
-                            disty = (holes_center[0+i][1] - holes_center[1+i][1])*y_coff
+                            distx = (holes_center[0+i][0] - holes_center[1+i][0])*shape.x_coff 
+                            disty = (holes_center[0+i][1] - holes_center[1+i][1])*shape.x_coff
                             print("line length:",math.sqrt(distx*distx+disty*disty))
-                            cv.line(src_print, holes_center[0+i], holes_center[i+1], (255,100,255), 1)
+                            if(math.sqrt(distx*distx+disty*disty)<150):    
+                                print("line coor: ", holes_center[0+i], ",",holes_center[i+1])  
+                                cv.line(src_print, holes_center[0+i], holes_center[i+1], (255,100,255), 1)
+                        hole_idx = 0
+                        for i in holes_center:
+                            xyz.send_Gcode("G90")
+                            xyz.move(shape.xy2xyz(shape.pixel2xy([i[0],i[1]]),0))
+                            # xyz.move(shape.xy2xyz(shape.pixel2xy([i[0],i[1]]),-5))
+                            time.sleep(10)
+                            align_hole(hole_idx)
+                            hole_idx += 1
+                            # xyz.move_pid([0,0,-12.5])
+                            xyz.move_pid([0,0,-5])
+                            xyz.drilling_action(xyz.ON,xyz.CLOCKWISE)
+                            time.sleep(2)
+                            # xyz.move_pid([0,0,12.5])
+                            xyz.move_pid([0,0,5])
+                            xyz.drilling_action(xyz.OFF,xyz.CLOCKWISE)
+
+                        state = 10
+
                 # else:
-                #     ser.testing_func(0)
+                #     xyz_table.drilling_action(0)
 
             elif state == state_dict['FIND_BLACK_BOX']:  
-                thresh = cv.threshold(gray, 35, 255, cv.THRESH_BINARY_INV)[1] # change the image to binary image by setting a threshold 117, when change new lighting setup you should change the 2nd parameter
-                cnts = cv.findContours(thresh, cv.RETR_TREE, cv.CHAIN_APPROX_NONE) 
-                cv.drawContours(src_print,cnts[0],-1,(255,0,0),1)
-                cnts = cnts[0] if len(cnts) == 2 else cnts[1]
-                for c in cnts: 
-                    area = cv.contourArea(c) 
-                    if(area > 20000 and area < 140000):# the hour and min hands
-                        print(area)
-                        #use a minimum area rectangle to bound the hour and min hand
-                        rect = cv.minAreaRect(c)
-                        box = cv.boxPoints(rect)
-                        box = np.int0(box)
-                        # Retrieve the key parameters of the rotated bounding box
-                        top_point_y = np.min(box[:, 1])
-                        bottom_point_y = np.max(box[:, 1])
-                        top_point_x = box[:, 0][np.where(box[:, 1] == top_point_y)][0]
-                        bottom_point_x = box[:, 0][np.where(box[:, 1] == bottom_point_y)][0]
-                        width = int(rect[1][0])
-                        height = int(rect[1][1])
-                        center = (int(rect[0][0]),int(rect[0][1]))
-                        center_list = shape.detect_circle(src = binaryIMG, src_print = src_print, minR = 8, maxR = 15,votes = 5,circle_xy = center,mindis = 15,maxdis = 45)
-                        if(area > 120000):
-                            cv.drawContours(src_print,[box],0,(0,0,170),2)
-                        elif(area < 40000):
-                            cv.drawContours(src_print,[box],0,(0,255,255),2)
-                        else:
-                            cv.drawContours(src_print,[box],0,(255,255,100),2)
-                        x, y, w, h = cv.boundingRect(c)
+                outer_box ,clock_movement = shape.detect_black_box(src,src_print)
+                thresh = cv.threshold(gray, 90, 255, cv.THRESH_BINARY_INV)[1] # change the image to binary image by setting a threshold 117, when change new lighting setup you should change the 2nd parameter
+                if(len(outer_box)>0):
+                    cv.rectangle(src_print,(outer_box[0],outer_box[1]), (outer_box[2],outer_box[3]), (0, 255, 0), 4)
+                    img = thresh[outer_box[1]:outer_box[3],outer_box[0]:outer_box[2]] #cut out part of the threshold image
+                if(len(clock_movement)>0):
+                    cv.rectangle(src_print,(clock_movement[0],clock_movement[1]), (clock_movement[2],clock_movement[3]), (255, 0, 0), 4)
+                    img2 = thresh[clock_movement[1]:clock_movement[3],clock_movement[0]:clock_movement[2]] #cut out part of the threshold image
 
-            # elif state == state_dict['FIND_FRAME']:
-            #     thresh = cv.threshold(gray, 140, 255, cv.THRESH_BINARY_INV)[1] # change the image to binary image by setting a threshold 117, when change new lighting setup you should change the 2nd parameter
-                
-
+        src_print = cv.resize(src_print, (1920,1080), interpolation = cv.INTER_AREA)
         cv.imshow('frame', binaryIMG)
         cv.imshow('thresh', thresh) 
         cv.imshow('src', src_print)
-        cv.setMouseCallback('src', click_event)
+        cv.setMouseCallback('src', shape.click_event)
         key = cv.waitKey(4)
         if (key & 0xFF == ord('q')) or (key & 0xFF == ord('Q')):
             break
         if (key & 0xFF == ord('s')) or (key & 0xFF == ord('S')):
-            name_str = "hand" + str(num) +".jpg"
+            name_str = "clock1" + str(num) +".jpg"
             cv.imwrite(name_str, src)
             num += 1
-            
-    vid_cam.release()
+    
+    # vid_cam.release()
+    stream1.stop()
+    stream2.stop()
     cv.destroyAllWindows()
     print('Hi')
